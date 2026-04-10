@@ -16,7 +16,12 @@ llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
 # )
 
 prompt = PromptTemplate.from_template(
-    "{instruction}\n\n리뷰: {content}") 
+    """사용자의 지시사항: {instruction}
+    
+    [시스템 필수 규칙 - 절대 어기지 마세요]
+    사용자의 지시사항을 수행하되, 데이터 처리를 위해 당신의 최종 답변 맨 앞에는 반드시 이 리뷰의 성격에 따라 [긍정] 또는 [부정] 이라는 태그를 고정으로 달아주세요.
+    
+    리뷰: {content}""") 
 
 chain = prompt | llm | StrOutputParser()
 
@@ -36,7 +41,7 @@ uploaded_file = st.file_uploader("리뷰가 담긴 텍스트 파일(.txt)을 올
 
 user_interaction = st.text_area(
     "AI에게 명령할 작업을 입력해주세요!",
-    value="다음 리뷰의 감정을 '긍정' 또는 '부정'으로 분류하고, 핵심 이유를 짧게 쓰세요. 반드시 이 리뷰의 성격에 따라 [긍정] 또는 [부정] 이라는 태그를 고정으로 달아주세요."
+    value="ex) 이 리뷰의 핵심 정보 요약해 줘"
 )
 
 # --- 3. 버튼이 눌렸을 때의 동작 ---
