@@ -1,5 +1,4 @@
 import streamlit as st
-import time
 import pandas as pd
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -8,20 +7,22 @@ from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
-# --- 1. AI 엔진 세팅 (화면 그려지기 전에 미리 조립!) ---
+# --- 1. AI 엔진 세팅 ---
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
 
-# prompt = PromptTemplate.from_template(
-#     "다음 리뷰의 감정을 '긍정' 또는 '부정'으로 분류하고, 짧은 이유를 쓰세요.\n\n리뷰: {content}"
-# )
-
+# 🌟 수정 포인트 1: AI가 여러 개의 리뷰를 한 번에 처리하도록 프롬프트 변경
 prompt = PromptTemplate.from_template(
     """사용자의 지시사항: {instruction}
     
     [시스템 필수 규칙 - 절대 어기지 마세요]
-    사용자의 지시사항을 수행하되, 데이터 처리를 위해 당신의 최종 답변 맨 앞에는 반드시 이 리뷰의 성격에 따라 [긍정] 또는 [부정] 이라는 태그를 고정으로 달아주세요.
+    아래 제공된 {num_reviews}개의 리뷰를 한 번에 모두 분석해주세요.
+    당신의 최종 답변은 반드시 각 리뷰 번호에 맞춰서 작성되어야 하며, 줄바꿈으로 구분해주세요.
+    각 줄의 시작은 반드시 "번호. [긍정] 또는 [부정] 이유" 형식이어야 합니다.
+    인사말이나 부연 설명 없이 사용자의 지시 사항에 맞춰 해당 내용을 출력해야합니다.
     
-    리뷰: {content}""") 
+    리뷰 목록:
+    {content}"""
+) 
 
 chain = prompt | llm | StrOutputParser()
 
@@ -36,102 +37,82 @@ with st.expander("📝 텍스트 파일 작성 예시 (펼쳐보기)"):
 이번 넷플릭스 신작 영화는 초반엔 흥미진진했는데 결말이 너무 허무해서 실망했습니다.""")
     st.info("💡 팁: 빈 줄 없이 작성하면 더 정확하게 분석됩니다.")
 
-# 파일 업로드 칸 만들기
-uploaded_file = st.file_uploader("리뷰가 담긴 텍스트 파일(.txt)을 올려주세요.", type=["txt"])
+uploaded_file = st.file_uploader("리뷰가 담긴 텍스트 파일(.txt)을 올려주세요.", type=["txt", "csv"])
 
 user_interaction = st.text_area(
     "AI에게 명령할 작업을 입력해주세요!",
-    value="ex) 이 리뷰의 핵심 정보 요약해 줘"
+    placeholder="ex)리뷰의 핵심 정보 요약해 줘, 리뷰의 핵심 키워드 뽑아줘"
 )
 
 # --- 3. 버튼이 눌렸을 때의 동작 ---
 if st.button("분석 시작하기"):
     if uploaded_file is not None:
         
-        # [핵심] 3-1. 업로드된 메모리상의 파일을 텍스트로 읽어오기
         string_data = uploaded_file.getvalue().decode("utf-8")
-        reviews = string_data.splitlines() # 줄바꿈 기준으로 잘라서 리스트로 만들기
+        reviews = string_data.splitlines() 
 
-        # 3-2. 데이터 다듬기 (빈 줄 제거)
-        inputs = []
-        valid_reviews = []
-        for review in reviews:
-            review = review.strip()
-            if not review: continue
-            inputs.append({"instruction": user_interaction,
-                           "content": review})
-            valid_reviews.append(review)
+        # 데이터 다듬기 (빈 줄 제거)
+        valid_reviews = [r.strip() for r in reviews if r.strip()]
 
-        # 3-3. 분석 진행 (청킹 + 배치 처리)
-        chunk_size = 5
-        final_results = []
-        
-        # 안내 문구 띄우기
-        with st.spinner("⏳ AI가 열심히 리뷰를 분석하는 중입니다..."):
-          
-          progress_bar = st.progress(0)
-          
-          for i in range(0, len(inputs), chunk_size):
-              chunk_inputs = inputs[i : i + chunk_size]
-              chunk_reviews = valid_reviews[i : i + chunk_size]
-              
-              # API 배치 호출
-              batch_responses = chain.batch(chunk_inputs)
-              
-              for review, response in zip(chunk_reviews, batch_responses):
-                  # 스트림릿의 표 만들기 기능을 위해 딕셔너리 형태로 묶어줍니다.
-                  final_results.append({"리뷰 원본": review, "AI 분석 결과": response})
-                  
-              current_progress = min(i + chunk_size, len(inputs)) / len(inputs)
-              progress_bar.progress(current_progress)
-                  
-              if i + chunk_size < len(inputs):
-                  time.sleep(2) # 라이트 버전은 조금만 쉬어도 됩니다!
-
-        # 3-4. 결과 출력
-        st.success("✅ 분석 완료!")
-        
-         # ==========================================
-        # 🌟 새롭게 추가되는 데이터 시각화(차트) 코드 🌟
-        # ==========================================
-        st.subheader("📊 리뷰 감정 요약 통계")
-        
-        # 1. 긍정과 부정 개수 세기
-        positive_cnt = 0
-        negative_cnt = 0
-        for res in final_results:
-            if "긍정" in res["AI 분석 결과"]:
-                positive_cnt += 1
-            else:
-                negative_cnt += 1
+        if not valid_reviews:
+            st.warning("분석할 리뷰가 없습니다. 파일 내용을 확인해주세요.")
+        else:
+            # 🌟 수정 포인트 2: 리스트를 "1. 리뷰내용 \n 2. 리뷰내용" 형태의 하나의 긴 문자로 묶기
+            combined_reviews = "\n".join([f"{i+1}. {review}" for i, review in enumerate(valid_reviews)])
+            
+            with st.spinner("⏳ AI가 리뷰를 분석하는 중입니다... (약 5~10초 소요)"):
+                # 🌟 수정 포인트 3: for문 없이 단 1번만 AI 호출! (RPM/RPD 1만 소비)
+                ai_response = chain.invoke({
+                    "instruction": user_interaction,
+                    "num_reviews": str(len(valid_reviews)),
+                    "content": combined_reviews
+                })
                 
-        # 2. 화면을 반으로 나눠서 핵심 요약 숫자 보여주기 (st.metric 활용)
-        col1, col2 = st.columns(2)
-        
-        col1.metric("긍정 리뷰", f"{positive_cnt}개")
-        col2.metric("부정 리뷰", f"{negative_cnt}개")
-        
-        chart_data = pd.DataFrame({
-            "개수" : [positive_cnt, negative_cnt]
-        }, index=["긍정", "부정"])
-        
-        st.bar_chart(chart_data)
-        st.divider()
-        
-        # 엑셀 파일 대신 스트림릿의 데이터프레임(표) 기능으로 화면에 바로 쏴주기!
-        st.dataframe(final_results)
-        df = pd.DataFrame(final_results)
-        
-        csv_data = df.to_csv(index=False).encode('utf-8-sig')
-        
-        st.download_button(
-          label="📥 엑셀(CSV) 파일로 다운로드",
-          data=csv_data,
-          file_name="reviews.csv",
-          mime="text/csv"
-        )
-        
-        
+                # 🌟 수정 포인트 4: 한 덩어리로 온 답변을 다시 줄바꿈 기준으로 쪼개서 표에 넣기 좋게 매칭
+                # AI가 준 답변을 한 줄씩 자름 (빈 줄 제외)
+                response_lines = [line.strip() for line in ai_response.split('\n') if line.strip()]
+                
+                final_results = []
+                positive_cnt = 0
+                negative_cnt = 0
+                
+                for i, review in enumerate(valid_reviews):
+                    # 만약 AI가 실수로 결과를 덜 줬을 경우를 대비한 안전장치
+                    if i < len(response_lines):
+                        ai_result = response_lines[i]
+                    else:
+                        ai_result = "분석 누락"
 
+                    final_results.append({"리뷰 원본": review, "AI 분석 결과": ai_result})
+                    
+                    if "[긍정]" in ai_result:
+                        positive_cnt += 1
+                    elif "[부정]" in ai_result:
+                        negative_cnt += 1
+
+            # --- 결과 출력 ---
+            st.success("✅ 분석 완료!")
+            
+            st.subheader("📊 리뷰 감정 요약 통계")
+            col1, col2 = st.columns(2)
+            col1.metric("긍정 리뷰", f"{positive_cnt}개")
+            col2.metric("부정 리뷰", f"{negative_cnt}개")
+            
+            chart_data = pd.DataFrame({
+                "개수" : [positive_cnt, negative_cnt]
+            }, index=["긍정", "부정"])
+            st.bar_chart(chart_data)
+            st.divider()
+            
+            st.dataframe(final_results)
+            
+            df = pd.DataFrame(final_results)
+            csv_data = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+              label="📥 엑셀(CSV) 파일로 다운로드",
+              data=csv_data,
+              file_name="reviews.csv",
+              mime="text/csv"
+            )
     else:
         st.error("앗! 파일을 먼저 업로드해 주세요.")
